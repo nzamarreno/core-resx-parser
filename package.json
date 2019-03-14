@@ -1,0 +1,11 @@
+{
+  "name": "trad-core",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "recursive-readdir": "^2.2.2",
+    "resx-parser": "^1.0.1",
+    "xlsx": "^0.14.1"
+  }
+}
