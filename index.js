@@ -4,20 +4,22 @@ const fetch = require("node-fetch");
 const xmlpoke = require('xmlpoke');
 const xml2js = require('xml2js'); 
 const parser = new xml2js.Parser();
+const args = require('yargs').argv;
 
 // Get params CLI
-const [, , path, exportExcel] = process.argv;
+const PATH = args.path;
+const EXCEL = args.excel;
 
 const API_KEY_TRANSLATE = "";
 const promisesFiles = [];
-const resxToJSON = [];
 
-if (path) {
-    fs.readdir(`${path}`, (_, files) => {
+if (PATH) {
+    fs.readdir(`${PATH}`, (_, files) => {
         files.forEach(file => {
+            if (file.match(/resx$/) === null) return;
             promisesFiles.push(
                 new Promise((resolveGroupBy, _) => {
-                    fs.readFile(__dirname + `/${path}/${file}`, function(err, data) {
+                    fs.readFile(__dirname + `/${PATH}/${file}`, function(err, data) {
                         parser.parseString(data, function (err, result) {
                             const resxObject = {};
                             
@@ -57,12 +59,7 @@ if (path) {
                     datasToExtract.push(values);
                 });
                 
-                // If second argument is not supply
-                if (exportExcel == undefined) {
-                    createExcel(getTitleFile(group[0].title), datasToExtract);
-                } else {
-                    await translateValues(getTitleFile(group[0].title), datasToExtract);
-                }
+                await translateValues(getTitleFile(group[0].title), datasToExtract);
             })
         })
     });
@@ -111,7 +108,7 @@ async function translateValues(_title, _values) {
                 if (key[el] === undefined) {
                     const includeTo = response[0].translations.find(x => el.includes(x.to));
                     if (includeTo) key[el] = includeTo.text;
-                    xmlpoke(`${path}/${_title}.${el}.resx`, function(xml) {
+                    xmlpoke(`${PATH}/${_title}.${el}.resx`, function(xml) {
                         xml
                         .ensure(`root/data[@name='${key.key}']`)
                         .setOrAdd(`root/data[@name='${key.key}']/value`, includeTo.text);
@@ -131,7 +128,9 @@ async function translateValues(_title, _values) {
             valuesCompleted.push(value);
         })
 
-        createExcel(_title, _values);
+        if (EXCEL) {
+            createExcel(_title, _values);
+        }
     }) 
 }
 
@@ -146,7 +145,7 @@ function createExcel(_nameFile, _datas) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "translate");
 
-    XLSX.writeFile(wb, `${path}/${_nameFile}.xlsx`);
+    XLSX.writeFile(wb, `${PATH}/${_nameFile}.xlsx`);
 }
 
 /**

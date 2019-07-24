@@ -16,8 +16,10 @@ $ npm install
 ## How is it work ?
 Your command should be to launch in the folder root
 ```bash
-$ node index.js ${path/of/my/resources}
+$ node index.js --path=${path/of/my/resources}
 ```
+
+**If you want Excel file, you should put `--excel` in arguments**
 > Now, you are happy, you have some files `.xsl` in the folder
 
 ## Tips
