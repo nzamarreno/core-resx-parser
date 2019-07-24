@@ -3,10 +3,13 @@ const fs = require("fs");
 const readline = require("readline");
 const XLSX = require("xlsx");
 const parser = new ResxParser();
+const fetch = require("node-fetch");
+const util = require('util');
 
 // Get params CLI
-const [, , path] = process.argv;
+const [, , path, exportExcel] = process.argv;
 
+const API_KEY_TRANSLATE = "";
 const promisesFiles = [];
 const resxToJSON = [];
 
@@ -50,10 +53,10 @@ if (path) {
                 );
             });
 
-            Promise.all(resxToJSON).then(valueResx => {
+            Promise.all(resxToJSON).then(async (valueResx) => {
                 const individualName = getTypeFile(valueResx);
                 const groupByTypes = groupFilesByCategory(individualName, valueResx);
-                groupByTypes.forEach(group => {
+                groupByTypes.forEach(async (group) => {
                     const keys = [];
                     group.forEach(elementOfGroup => {
                         for (key in elementOfGroup.resx) {
@@ -72,8 +75,13 @@ if (path) {
                         })
                         datasToExtract.push(values);
                     });
-
-                    createExcel(getTitleFile(group[0].title), datasToExtract)
+                    
+                    // If second argument is not supply
+                    if (exportExcel == undefined) {
+                        createExcel(getTitleFile(group[0].title), datasToExtract);
+                    } else {
+                        await translateValues(getTitleFile(group[0].title), datasToExtract);
+                    }
                 })
 
             });
@@ -81,6 +89,68 @@ if (path) {
     });
 } else {
     console.log("\x1b[41m", "WARNING, YOU SHOULD PUT THE PATH OF YOUR RESOURCES WITH YOUR .RESX", "\x1b[0m")
+}
+
+const URL_API = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&from=en";
+function createTranslateParams(prefixLang) {
+    return `${URL_API}&to=${prefixLang.join("&to=")}`;
+}
+
+async function translateValues(_title, _values) {
+    const resultToSend = [];
+    const valNull = _values.filter(x => {
+        for (let el in x) {
+            if (x[el] === undefined) {
+                return x;
+            }
+        }
+    });
+    valNull.map(async (key) => {
+        const reference = key["en-GB"];
+        if (reference) {
+            const prefixToTranslate = [];
+            for (let el in key) {
+                if (key[el] === undefined) {
+                    prefixToTranslate.push(el);
+                }
+            }
+
+            // Call API
+            const url = createTranslateParams(prefixToTranslate);
+            const result = await fetch(url, {
+                method: 'post',
+                body: JSON.stringify([{Text: reference}]),
+                headers: {
+                    "Ocp-Apim-Subscription-Key": API_KEY_TRANSLATE, 
+                    "Content-Type": "application/json"
+                },
+            });
+            const response = await result.json();
+
+            //FIXME: Improve how map values
+            let index = 0;
+            for (let el in key) {
+                if (key[el] === undefined) {
+                    const includeTo = response[0].translations.find(x => el.includes(x.to));
+                    if (includeTo) key[el] = includeTo.text;
+                }
+                index++;
+            }
+            resultToSend.push(key);
+        }
+
+        const createDatas = [];
+        _values.forEach(value => {
+            const indexValue = _values.findIndex(x => x.key === value.key);
+            if (indexValue) {
+                _values[indexValue] = value;
+            }
+            createDatas.push(value);
+        })
+        
+        createExcel(_title, _values);
+    })
+    
 }
 
 /**
