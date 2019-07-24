@@ -1,10 +1,9 @@
-const ResxParser = require("resx-parser");
 const fs = require("fs");
-const readline = require("readline");
 const XLSX = require("xlsx");
-const parser = new ResxParser();
 const fetch = require("node-fetch");
-const util = require('util');
+const xmlpoke = require('xmlpoke');
+const xml2js = require('xml2js'); 
+const parser = new xml2js.Parser();
 
 // Get params CLI
 const [, , path, exportExcel] = process.argv;
@@ -18,73 +17,53 @@ if (path) {
         files.forEach(file => {
             promisesFiles.push(
                 new Promise((resolveGroupBy, _) => {
-                    const rd = readline.createInterface({
-                        input: fs.createReadStream(`${path}/${file}`),
-                        console: false
-                    });
-
-                    // Action line by line
-                    let linesRESX = "";
-                    rd.on("line", line => {
-                        linesRESX += line;
-                    });
-
-                    // Close
-                    rd.on("close", () => {
-                        resolveGroupBy({ title: `${file}`, resx: linesRESX });
+                    fs.readFile(__dirname + `/${path}/${file}`, function(err, data) {
+                        parser.parseString(data, function (err, result) {
+                            const resxObject = {};
+                            
+                            result.root.data.forEach(x => {
+                                if (x.value === undefined) {
+                                    console.log("missing value: ", x["$"].name, file)
+                                }
+                                resxObject[`${x["$"].name}`] = x.value ? x.value[0] : "";
+                            });
+                            resolveGroupBy({ title: `${file}`, resx: resxObject});
+                        });
                     });
                 })
             )
         })
 
-        // Parse RESX
-        Promise.all(promisesFiles).then(allFiles => {
-            allFiles.forEach(fileInString => {
-                resxToJSON.push(
-                    new Promise((resolve, _) => {
-                        parser.parseString(fileInString.resx, (err, result) => {
-                            if (err) {
-                                return console.log(err);
-                            } else {
-                                resolve({ title: `${fileInString.title}`, resx: result });
-                            }
-                        });
-                    })
-                );
-            });
-
-            Promise.all(resxToJSON).then(async (valueResx) => {
-                const individualName = getTypeFile(valueResx);
-                const groupByTypes = groupFilesByCategory(individualName, valueResx);
-                groupByTypes.forEach(async (group) => {
-                    const keys = [];
-                    group.forEach(elementOfGroup => {
-                        for (key in elementOfGroup.resx) {
-                            if (!keys.find(x => x === key)) keys.push(key);
-                        }
-                    });
-
-                    const datasToExtract = [];
-                    const prefixs = getPrefixLanguage(group.map(x => x.title));
-                    keys.forEach(key => {
-                        values = {};
-                        values["key"] = key;
-
-                        prefixs.forEach((lang, index) => {
-                            values[lang] = group[index].resx[key];
-                        })
-                        datasToExtract.push(values);
-                    });
-                    
-                    // If second argument is not supply
-                    if (exportExcel == undefined) {
-                        createExcel(getTitleFile(group[0].title), datasToExtract);
-                    } else {
-                        await translateValues(getTitleFile(group[0].title), datasToExtract);
+        Promise.all(promisesFiles).then(valueResx => {
+            const individualName = getTypeFile(valueResx);
+            const groupByTypes = groupFilesByCategory(individualName, valueResx);
+            groupByTypes.forEach(async (group) => {
+                const keys = [];
+                group.forEach(elementOfGroup => {
+                    for (key in elementOfGroup.resx) {
+                        if (!keys.find(x => x === key)) keys.push(key);
                     }
-                })
+                });
 
-            });
+                const datasToExtract = [];
+                const prefixs = getPrefixLanguage(group.map(x => x.title));
+                keys.forEach(key => {
+                    values = {};
+                    values["key"] = key;
+
+                    prefixs.forEach((lang, index) => {
+                        values[lang] = group[index].resx[key];
+                    })
+                    datasToExtract.push(values);
+                });
+                
+                // If second argument is not supply
+                if (exportExcel == undefined) {
+                    createExcel(getTitleFile(group[0].title), datasToExtract);
+                } else {
+                    await translateValues(getTitleFile(group[0].title), datasToExtract);
+                }
+            })
         })
     });
 } else {
@@ -123,34 +102,37 @@ async function translateValues(_title, _values) {
                 headers: {
                     "Ocp-Apim-Subscription-Key": API_KEY_TRANSLATE, 
                     "Content-Type": "application/json"
-                },
+                }
             });
             const response = await result.json();
 
             //FIXME: Improve how map values
-            let index = 0;
             for (let el in key) {
                 if (key[el] === undefined) {
                     const includeTo = response[0].translations.find(x => el.includes(x.to));
                     if (includeTo) key[el] = includeTo.text;
+                    xmlpoke(`${path}/${_title}.${el}.resx`, function(xml) {
+                        xml
+                        .ensure(`root/data[@name='${key.key}']`)
+                        .setOrAdd(`root/data[@name='${key.key}']/value`, includeTo.text);
+                    })
                 }
-                index++;
             }
+
             resultToSend.push(key);
         }
 
-        const createDatas = [];
+        const valuesCompleted = [];
         _values.forEach(value => {
             const indexValue = _values.findIndex(x => x.key === value.key);
             if (indexValue) {
                 _values[indexValue] = value;
             }
-            createDatas.push(value);
+            valuesCompleted.push(value);
         })
-        
+
         createExcel(_title, _values);
-    })
-    
+    }) 
 }
 
 /**
@@ -159,7 +141,6 @@ async function translateValues(_title, _values) {
  * @param {Array} _datas 
  */
 function createExcel(_nameFile, _datas) {
-    console.log(_nameFile)
     const ws = XLSX.utils.json_to_sheet(_datas);
 
     const wb = XLSX.utils.book_new();
