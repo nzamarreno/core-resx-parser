@@ -27,6 +27,24 @@ $ pwd
 # /Users/John/myApp/Ressources
 ```
 
+## Inscription Microsoft Translator
+You should create your account for access to Azure Portal.  
+You can follow these [instructions](https://docs.microsoft.com/en-us/azure/cognitive-services/translator/translator-text-how-to-signup).  
+Over there, you get your key `RESOURCE MANAGEMENT > Keys`, after that, you can call API with your translate from => to and your text like this below: 
+```javascript
+CONST API_URL = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&from=en&to=fr&to=da";
+
+let result = await fetch(API_URL, {
+    method: 'post',
+    body: JSON.stringify([{Text: "Your text to translate"}]),
+    headers: {
+        "Ocp-Apim-Subscription-Key": {YOUR_KEY_AZURE_PORTAL}, 
+        "Content-Type": "application/json"
+    },
+});
+```
+**Microsoft Documentation:** https://docs.microsoft.com/en-us/azure/cognitive-services/translator/reference/v3-0-translate?tabs=curl
+
 ---
 **Made with love <3**
 
