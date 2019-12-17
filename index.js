@@ -10,6 +10,8 @@ const parser = new xml2js.Parser();
 const PATH = args.path;
 const EXCEL = args.excel;
 const INSERT = args.insert;
+const TRANSLATE = args.translate;
+const REF = args.ref;
 
 // API Key Microsoft Translator (Key is in Azure Portal)
 const API_URL_TRANSLATOR = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&from=en";
@@ -20,24 +22,32 @@ if (!PATH) {
     return;
 }
 
+const valuesFormatted = [];
+const allKeys = [];
+// Pass ref if there is a ISO code, but here, the reference is "SharedResource" because there isn't code ISO after the name.
+// Example if the reference file name is SharedResource.fr pass the ref param is "fr"
+// Current example, here there is not code ISO, so, pass the file Name
+const REFLANGUAGE = REF || "SharedResource";
+
 fs.readdir(`${PATH}`, (_, files) => {
 
     const filesInFolder = files
         .filter(resxFile => resxFile.match(/resx$/) !== null)
         .map(resxFile => getPromiseWithParsedResx(resxFile));
 
+    // { title: string; resx: {[key: string]: string}[] }[]
     Promise.all(filesInFolder).then(resxContentByFile => {
         const filesByName = getFilesByName(resxContentByFile);
-        filesByName.forEach(fileGroup => {
-            const allKeys = [];
+        filesByName.forEach((fileGroup, index) => {
             fileGroup.forEach(resxFile => {
                 for (key in resxFile.resx) {
                     if (!allKeys.find(x => x === key)) allKeys.push(key);
                 }
             });
 
-            const valuesByKey = [];
             const prefixLangages = getPrefixLanguages(fileGroup.map(x => x.title));
+
+            const valuesByKey = [];
 
             allKeys.forEach(key => {
                 values = {};
@@ -48,11 +58,93 @@ fs.readdir(`${PATH}`, (_, files) => {
                 })
                 valuesByKey.push(values);
             });
-            translateValues(getFileTitle(fileGroup[0].title), valuesByKey);
+
+            valuesFormatted.push({ name: fileGroup[0].title, values: valuesByKey });
+
+            if (EXCEL) createExcel(title, valuesByKey);
             if (keysValueTwice.length > 0) createExcel("double-value", keysValueTwice);
         })
+
+        if (TRANSLATE) {
+            const keys = getMissingAndEmptyValueByLanguage(valuesFormatted);
+            goTranslate(valuesFormatted, keys);
+        }
     })
 });
+
+function getReferenceIndex(resources) {
+    let index;
+    for (let i = 0; i < resources.length; i++) {
+        if (Object.keys(resources[i].values[0]).includes(REFLANGUAGE)) {
+            index = i;
+            break;
+        }
+    }
+
+    return index;
+}
+
+function goTranslate(filesFormatted, keyMissing) {
+    const indexRef = getReferenceIndex(filesFormatted);
+    const ref = filesFormatted[indexRef];
+    const keyTranslated = [];
+
+    keyMissing.forEach(value => {
+        const url = `${API_URL_TRANSLATOR}&to=${value.lang}`;
+        const allKeysToTranslate = value.emptyKeys.concat(value.missingKeys);
+
+        const toTranslate = ref.values.filter(r => allKeysToTranslate.includes(r.key));
+
+        toTranslate.forEach(async (key, index) => {
+            const result = await fetch(url, {
+                method: 'post',
+                body: JSON.stringify([{ Text: key[REFLANGUAGE] }]),
+                headers: {
+                    "Ocp-Apim-Subscription-Key": API_KEY_TRANSLATOR,
+                    "Content-Type": "application/json"
+                }
+            });
+            const responses = await result.json();
+
+            responses.map(response => {
+                if (INSERT) {
+                    xmlpoke(`${PATH}/${value.name}`, function (xml) {
+                        xml
+                        .ensure(`root/data[@name='${key.key}']`)
+                        .setOrAdd(`root/data[@name='${key.key}']/value`, response.translations[0].text);
+                    });
+                }
+                keyTranslated.push({lang: value.lang, key: key.key, translate: response.translations[0].text, ref: key[REFLANGUAGE] });
+
+                if ((toTranslate.length - 1) === index) createExcel(`${value.name}-translate`, keyTranslated);
+            });
+        });
+
+    })
+}
+
+function getMissingAndEmptyValueByLanguage(filesFormatted) {
+    const indexRef = getReferenceIndex(filesFormatted);
+    const othersValues = filesFormatted.splice(0, indexRef);
+    // {[key:string]: string; key: string}[]
+    return othersValues.map(x => {
+        const lang = Object.keys(x.values[1])[1];
+        const emptyKeysEntities = x.values.filter(y => {
+            if (y[lang] === "" || y[lang] === undefined) return y;
+        });
+        const emptyKeys = emptyKeysEntities.map(y => y.key);
+
+        const missingKeysEntities = x.values.map(y => y.key);
+        const missingKeys = allKeys.filter(y => !missingKeysEntities.includes(y));
+
+        return {
+            name: x.name,
+            lang,
+            emptyKeys,
+            missingKeys
+        }
+    })
+}
 
 function getPromiseWithParsedResx(resxFile) {
     return new Promise((resolve, _) => {
@@ -72,7 +164,6 @@ function getPromiseWithParsedResx(resxFile) {
                 });
 
                 getDouble(allKeys, `${resxFile}`);
-
                 resolve({ title: `${resxFile}`, resx: resxObject });
             });
         });
@@ -98,74 +189,14 @@ function getDouble(allKeys, titleFile) {
     allKeys.forEach(x => {
         let countValue = valueIsAlreadyPresent(allKeys, x);
         if (countValue > 1 && !keysTwice.some(value => value.key === x)) {
-            keysTwice.push({key: x, count: countValue});
+            keysTwice.push({ key: x, count: countValue });
         }
     });
 
     if (keysTwice.length > 0) {
         keysTwice.forEach(x => {
-            keysValueTwice.push({title: titleFile, value: x.key, count: x.count})
+            keysValueTwice.push({ title: titleFile, value: x.key, count: x.count })
         });
-    }
-}
-
-/**
- * Translate Values with Microsoft Translator API
- * @param {string} title 
- * @param {Array} valuesByKey 
- * @return {void}
- */
-async function translateValues(title, valuesByKey) {
-    const keysWithMissingTranslations = valuesByKey.filter(key => Object.keys(key).some(langage => key[langage] === undefined));
-
-    keysWithMissingTranslations.map(async key => {
-        const reference = key["en-GB"];
-        if (reference) {
-            const langagesToTranslate = Object.keys(key).filter(langage => key[langage] === undefined);
-
-            // Call Microsoft Translator API
-            const url = `${API_URL_TRANSLATOR}&to=${langagesToTranslate.join("&to=")}`;
-            const result = await fetch(url, {
-                method: 'post',
-                body: JSON.stringify([{ Text: reference }]),
-                headers: {
-                    "Ocp-Apim-Subscription-Key": API_KEY_TRANSLATOR,
-                    "Content-Type": "application/json"
-                }
-            });
-            const response = await result.json();
-
-            langagesToTranslate.map(langage => {
-                const includeTo = response[0].translations.find(translation => langage.includes(translation.to));
-                if (includeTo) key[langage] = includeTo.text;
-
-                // Modify Resx and Insert value
-                if (INSERT) {
-                    xmlpoke(`${PATH}/${title}.${langage}.resx`, function (xml) {
-                        xml
-                            .ensure(`root/data[@name='${key.key}']`)
-                            .setOrAdd(`root/data[@name='${key.key}']/value`, includeTo.text);
-                    })
-                }
-            });
-        }
-
-        const valuesCompleted = [];
-        valuesByKey.forEach(value => {
-            const indexValue = valuesByKey.findIndex(x => x.key === value.key);
-            if (indexValue) {
-                valuesByKey[indexValue] = value;
-            }
-            valuesCompleted.push(value);
-        })
-
-        if (EXCEL) {
-            createExcel(title, valuesCompleted);
-        }
-    })
-
-    if (EXCEL) {
-        createExcel(title, valuesByKey);
     }
 }
 
@@ -206,9 +237,8 @@ function getPrefixLanguages(allResxFiles) {
  */
 function getFilesName(files) {
     const fileNames = files.map(file => getFileTitle(file.title));
-
     return fileNames.filter((item, pos) => {
-        return fileNames.indexOf(item) == pos;
+        return fileNames.indexOf(item) === pos;
     })
 }
 
