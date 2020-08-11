@@ -61,7 +61,7 @@ fs.readdir(`${PATH}`, (_, files) => {
 
             valuesFormatted.push({ name: fileGroup[0].title, values: valuesByKey });
 
-            if (EXCEL) createExcel(title, valuesByKey);
+            if (EXCEL) createExcel(fileGroup[0].title, valuesByKey);
             if (keysValueTwice.length > 0) createExcel("double-value", keysValueTwice);
         })
 
