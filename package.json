@@ -5,7 +5,7 @@
   "license": "MIT",
   "dependencies": {
     "node-fetch": "^2.6.0",
-    "xlsx": "^0.14.1",
+    "xlsx": "^0.17.0",
     "xml2js": "^0.4.19",
     "xmlpoke": "^0.1.16",
     "yargs": "^13.3.0"
